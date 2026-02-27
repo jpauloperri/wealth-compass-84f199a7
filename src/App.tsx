@@ -9,7 +9,7 @@ import Questionnaire from "./pages/Questionnaire";
 import Upload from "./pages/Upload";
 import PersonalNarrative from "./pages/PersonalNarrative";
 import Processing from "./pages/Processing";
-import Results from "./pages/Results";
+import GapReport from "./pages/GapReport";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -27,7 +27,7 @@ const App = () => (
             <Route path="/upload" element={<Upload />} />
             <Route path="/relato" element={<PersonalNarrative />} />
             <Route path="/processando" element={<Processing />} />
-            <Route path="/resultado" element={<Results />} />
+            <Route path="/resultado" element={<GapReport />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

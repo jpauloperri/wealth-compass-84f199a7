@@ -4,21 +4,20 @@ import { Shield } from "lucide-react";
 import { useDiagnostic } from "@/contexts/DiagnosticContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { processarExtratosMultiplos } from "@/services/extractorPDF";
 
 const messages = [
   "Analisando seu perfil financeiro...",
-  "Mapeando sua carteira de investimentos...",
-  "Identificando vieses comportamentais...",
-  "Calculando alocação ideal...",
-  "Otimizando eficiência tributária...",
-  "Construindo plano de migração...",
-  "Gerando recomendações personalizadas...",
-  "Finalizando seu diagnóstico...",
+  "Extraindo dados dos seus extratos...",
+  "Mapeando gaps e riscos...",
+  "Calculando oportunidades...",
+  "Gerando seu diagnóstico patrimonial...",
+  "Preparando resultado final...",
 ];
 
 const Processing = () => {
   const navigate = useNavigate();
-  const { state, setDiagnosisResult, setDiagnosisError } = useDiagnostic();
+  const { state, setDiagnosisResult, setDiagnosisError, setIsLoading } = useDiagnostic();
   const [messageIdx, setMessageIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const calledRef = useRef(false);
@@ -41,12 +40,25 @@ const Processing = () => {
   useEffect(() => {
     if (calledRef.current) return;
     calledRef.current = true;
+    setIsLoading(true);
 
     const runDiagnosis = async () => {
       try {
-        // Step 1: Transcribe audio if available
-        let narrative = state.personalNarrative || "";
+        // Step 1: Processar extratos OCR se houver arquivos
+        let extratosOCRParsed = null;
+        if (state.uploadedFiles && state.uploadedFiles.length > 0) {
+          try {
+            console.log("Processando extratos OCR...");
+            extratosOCRParsed = await processarExtratosMultiplos(state.uploadedFiles);
+            console.log("Extratos processados:", extratosOCRParsed);
+          } catch (e) {
+            console.warn("OCR parsing falhou, continuando sem extratos:", e);
+            toast.warning("Não foi possível processar os extratos, continuando análise...");
+          }
+        }
 
+        // Step 2: Transcrever áudio se houver
+        let narrative = state.personalNarrative || "";
         if (state.audioBlob && !narrative) {
           try {
             const formData = new FormData();
@@ -58,7 +70,7 @@ const Processing = () => {
 
             if (transcribeResp.error) {
               console.error("Transcription error:", transcribeResp.error);
-              toast.warning("Não foi possível transcrever o áudio. Continuando sem relato pessoal.");
+              toast.warning("Não foi possível transcrever o áudio...");
             } else if (transcribeResp.data?.transcription) {
               narrative = transcribeResp.data.transcription;
             }
@@ -68,14 +80,16 @@ const Processing = () => {
           }
         }
 
-        // Step 2: Generate diagnosis
+        // Step 3: Gerar GAP REPORT via Claude
+        console.log("Enviando para gerar diagnóstico...");
         const { data, error } = await supabase.functions.invoke("generate-diagnosis", {
           body: {
             questionnaire: state.questionnaire,
             narrative: narrative || null,
-            extractsDescription: state.uploadedFiles.length > 0
-              ? `Cliente enviou ${state.uploadedFiles.length} arquivo(s): ${state.uploadedFiles.map(f => f.name).join(", ")}. (Análise de conteúdo dos extratos será implementada na próxima fase com integração Google Drive.)`
+            extractsDescription: state.uploadedFiles && state.uploadedFiles.length > 0
+              ? `Cliente enviou ${state.uploadedFiles.length} arquivo(s): ${state.uploadedFiles.map((f) => f.name).join(", ")}. Extratos OCR processados com ${extratosOCRParsed?.length || 0} arquivo(s) extraído(s).`
               : null,
+            extratosOCRParsed: extratosOCRParsed || null,
           },
         });
 
@@ -96,9 +110,12 @@ const Processing = () => {
         }
       } catch (e: any) {
         console.error("Diagnosis failed:", e);
-        setDiagnosisError(e.message || "Erro desconhecido");
-        toast.error("Erro ao gerar diagnóstico: " + (e.message || "Tente novamente"));
+        const errMsg = e.message || "Erro desconhecido";
+        setDiagnosisError(errMsg);
+        toast.error("Erro ao gerar diagnóstico: " + errMsg);
         setTimeout(() => navigate("/relato"), 3000);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -117,8 +134,12 @@ const Processing = () => {
           </div>
         </div>
 
-        <h2 className="font-display text-xl font-bold text-foreground mb-2">Processando seu diagnóstico</h2>
-        <p className="text-muted-foreground text-sm mb-8 h-5 transition-all">{messages[messageIdx]}</p>
+        <h2 className="font-display text-xl font-bold text-foreground mb-2">
+          Processando seu diagnóstico
+        </h2>
+        <p className="text-muted-foreground text-sm mb-8 h-5 transition-all">
+          {messages[messageIdx]}
+        </p>
 
         {/* Progress bar */}
         <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden mb-4">
@@ -127,7 +148,7 @@ const Processing = () => {
             style={{ width: `${progress}%` }}
           />
         </div>
-        <p className="text-xs text-muted-foreground">Tempo estimado: 30s a 2 minutos</p>
+        <p className="text-xs text-muted-foreground">Análise: ~30-60 segundos</p>
       </div>
     </div>
   );

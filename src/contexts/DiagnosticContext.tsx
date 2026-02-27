@@ -1,49 +1,47 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
+import type { GapReport } from "@/types/gap-report";
 
 export interface QuestionnaireData {
-  // Bloco 1 — Dados Pessoais e Financeiros
+  // Identificação
   nomeCompleto: string;
-  email: string;
-  telefone: string;
   idade: string;
-  estadoCivil: string;
-  dependentes: string;
+  profissao: string;
+
+  // Fluxo de Caixa
   rendaBruta: string;
-  rendaLiquida: string;
-  fontesRenda: string;
-  estabilidadeRenda: string;
+  naturezaRenda: string;
   despesasFixas: string;
-  reservaEmergencia: string;
+  despesasVariaveis?: string;
+
+  // Patrimônio
+  liquidezImediata: string;
   patrimonioFinanceiro: string;
   patrimonioImobiliario: string;
+  patrimonioOutros?: string;
+
+  // Dívidas
   dividas: string;
-  modeloIR: string;
-  pgblVgbl: string;
-  // Bloco 2 — Objetivos
+  custoDivida: string;
+
+  // Suitability
   objetivo: string;
   horizonte: string;
-  necessidadeLiquidez: string;
-  eventosPrevistos: string;
-  aporteDisponivel: string;
-  aporteEfetivo: string;
-  valorInicial: string;
-  // Bloco 3 — Perfil de Risco
-  experiencia: string;
   reacaoQuedas: string;
   perdaMaxima: string;
   perfilAnbima: string;
-  prioridadeRisco: string;
-  aversoes: string;
-  // Bloco 4 — Tributário
-  interessePGBL: string;
-  investimentoExterior: string;
-  preferenciaComplexidade: string;
-  frequenciaAcompanhamento: string;
-  // Bloco 5 — Proteção
-  seguroVida: string;
-  planejamentoSucessorio: string;
-  dependentesProtecao: string;
-  patrimonioAcima5M: string;
+
+  // Comportamento
+  dormiPerdeOSono?: string;
+  restricoes?: string;
+  estadoCivil?: string;
+  dependentes?: string;
+
+  // Proteção
+  seguroVida?: string;
+  planejamentoSucessorio?: string;
+
+  // Modelo Fiscal
+  modeloIR?: string;
 }
 
 export interface DiagnosticState {
@@ -53,8 +51,9 @@ export interface DiagnosticState {
   audioBlob: Blob | null;
   currentStep: number;
   consentGiven: boolean;
-  diagnosisResult: any | null;
+  diagnosisResult: GapReport | null;
   diagnosisError: string | null;
+  isLoading: boolean;
 }
 
 interface DiagnosticContextType {
@@ -65,8 +64,9 @@ interface DiagnosticContextType {
   setAudioBlob: (blob: Blob | null) => void;
   setCurrentStep: (step: number) => void;
   setConsentGiven: (v: boolean) => void;
-  setDiagnosisResult: (result: any | null) => void;
+  setDiagnosisResult: (result: GapReport | null) => void;
   setDiagnosisError: (error: string | null) => void;
+  setIsLoading: (loading: boolean) => void;
 }
 
 const DiagnosticContext = createContext<DiagnosticContextType | null>(null);
@@ -87,21 +87,44 @@ export const DiagnosticProvider = ({ children }: { children: ReactNode }) => {
     consentGiven: false,
     diagnosisResult: null,
     diagnosisError: null,
+    isLoading: false,
   });
 
   const updateQuestionnaire = (data: Partial<QuestionnaireData>) =>
     setState((s) => ({ ...s, questionnaire: { ...s.questionnaire, ...data } }));
+
   const setUploadedFiles = (files: File[]) => setState((s) => ({ ...s, uploadedFiles: files }));
+
   const setPersonalNarrative = (text: string) => setState((s) => ({ ...s, personalNarrative: text }));
+
   const setAudioBlob = (blob: Blob | null) => setState((s) => ({ ...s, audioBlob: blob }));
+
   const setCurrentStep = (step: number) => setState((s) => ({ ...s, currentStep: step }));
+
   const setConsentGiven = (v: boolean) => setState((s) => ({ ...s, consentGiven: v }));
-  const setDiagnosisResult = (result: any | null) => setState((s) => ({ ...s, diagnosisResult: result }));
-  const setDiagnosisError = (error: string | null) => setState((s) => ({ ...s, diagnosisError: error }));
+
+  const setDiagnosisResult = (result: GapReport | null) =>
+    setState((s) => ({ ...s, diagnosisResult: result }));
+
+  const setDiagnosisError = (error: string | null) =>
+    setState((s) => ({ ...s, diagnosisError: error }));
+
+  const setIsLoading = (loading: boolean) => setState((s) => ({ ...s, isLoading: loading }));
 
   return (
     <DiagnosticContext.Provider
-      value={{ state, updateQuestionnaire, setUploadedFiles, setPersonalNarrative, setAudioBlob, setCurrentStep, setConsentGiven, setDiagnosisResult, setDiagnosisError }}
+      value={{
+        state,
+        updateQuestionnaire,
+        setUploadedFiles,
+        setPersonalNarrative,
+        setAudioBlob,
+        setCurrentStep,
+        setConsentGiven,
+        setDiagnosisResult,
+        setDiagnosisError,
+        setIsLoading,
+      }}
     >
       {children}
     </DiagnosticContext.Provider>
