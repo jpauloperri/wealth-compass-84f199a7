@@ -1,3 +1,6 @@
+// ⚠️ COPIE E COLE ISSO INTEIRO NA FUNÇÃO: supabase/functions/generate-diagnosis/index.ts
+// NO LOVABLE: Files > supabase/functions/generate-diagnosis/index.ts > Delete All > Paste This
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -6,96 +9,168 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const SYSTEM_PROMPT = `Você é um estrategista de investimentos e patrimônio sênior com certificações CFP®, CGA e CNPI, atuando em uma gestora de patrimônio independente brasileira. Sua especialidade é construção e otimização de portfólios multi-ativos para pessoas físicas, com profundo conhecimento do mercado brasileiro e acesso criterioso a ativos internacionais.
+/**
+ * Fetch dados de mercado do BCB em paralelo
+ * Fontes: Banco Central (Selic, CDI, IPCA, USD) + brapi (IBOV)
+ */
+async function getMarketData() {
+  try {
+    const [selicRes, cdiRes, ipcaRes, usdRes] = await Promise.all([
+      fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.11/dados?formato=json"),
+      fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json"),
+      fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.433/dados?formato=json"),
+      fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados?formato=json"),
+    ]);
 
-Você domina:
-- Regulação CVM, ANBIMA, Receita Federal e BACEN aplicável a investimentos de pessoa física.
-- Tributação de renda fixa, renda variável, fundos de investimento, previdência privada (PGBL/VGBL) e investimentos no exterior (Lei 14.754/2023).
-- Finanças comportamentais: vieses cognitivos, heurísticas de decisão e padrões emocionais que impactam a gestão de patrimônio.
-- Planejamento sucessório básico (previdência como transmissão, ITCMD, seguro de vida).
+    const [selic, cdi, ipca, usd] = await Promise.all([selicRes.json(), cdiRes.json(), ipcaRes.json(), usdRes.json()]);
 
-Você adapta seu nível de linguagem ao perfil do cliente: técnico e direto com investidores experientes, didático (sem ser condescendente) com iniciantes. Nunca use linguagem motivacional, jargão de coaching ou frases de efeito. Seja profissional, objetivo e humano.
+    // Extrai último valor (mais recente)
+    const getLatest = (arr: any[]) => {
+      const item = arr[arr.length - 1];
+      return { value: parseFloat(item.valor), date: item.data };
+    };
 
-TAREFA: Com base nos dados fornecidos, gere um diagnóstico patrimonial completo. Responda EXCLUSIVAMENTE em formato JSON válido com a seguinte estrutura:
+    // IBOV via brapi
+    let ibov = { value: 128000, change: 0 };
+    try {
+      const ibovRes = await fetch("https://brapi.dev/api/quote/^BVSP");
+      if (ibovRes.ok) {
+        const ibovData = await ibovRes.json();
+        const quote = ibovData.results?.[0];
+        if (quote) {
+          ibov = {
+            value: quote.regularMarketPrice || 128000,
+            change: quote.regularMarketChangePercent || 0,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn("IBOV fetch warning:", e);
+    }
+
+    return {
+      selic: getLatest(selic),
+      cdi: getLatest(cdi),
+      ipca: getLatest(ipca),
+      usdBrl: getLatest(usd),
+      ibov,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (e) {
+    console.error("Market data fetch error:", e);
+    // Fallback com valores estimados (não quebra)
+    return {
+      selic: { value: 10.5, date: new Date().toLocaleDateString("pt-BR") },
+      cdi: { value: 10.15, date: new Date().toLocaleDateString("pt-BR") },
+      ipca: { value: 4.2, date: new Date().toLocaleDateString("pt-BR") },
+      usdBrl: { value: 5.15, date: new Date().toLocaleDateString("pt-BR") },
+      ibov: { value: 128000, change: 0.5 },
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+/**
+ * Formata dados de mercado pra contexto da IA
+ */
+function formatMarketContext(marketData: any): string {
+  return `## CONTEXTO DE MERCADO (${marketData.timestamp})
+
+**Taxa Selic:** ${marketData.selic.value.toFixed(2)}% a.a. (${marketData.selic.date})
+**CDI:** ${marketData.cdi.value.toFixed(2)}% a.a. (${marketData.cdi.date})
+**IPCA:** ${marketData.ipca.value.toFixed(2)}% (${marketData.ipca.date})
+**USD/BRL (PTAX venda):** R$ ${marketData.usdBrl.value.toFixed(4)} (${marketData.usdBrl.date})
+**IBOV:** ${marketData.ibov.value.toFixed(0)} pts (variação: ${marketData.ibov.change > 0 ? "+" : ""}${marketData.ibov.change.toFixed(2)}%)
+
+Use esses dados como benchmark, referência de taxa de desconto e expectativas de retorno.`;
+}
+
+/**
+ * System prompt otimizado pra Claude
+ */
+function getSystemPrompt(): string {
+  return `Você é estrategista sênior em investimentos e patrimônio, com certificações CFP®, CGA e CNPI.
+
+EXPERTISE:
+- Regulação CVM/ANBIMA/BACEN/Receita Federal para pessoa física
+- Tributação: renda fixa, variável, fundos, PGBL/VGBL, Lei 14.754/2023
+- Finanças comportamentais, psicologia do investidor
+- Planejamento sucessório, proteção patrimonial
+
+TOM: Direto, objetivo, sem motivacional, sem jargão de coach. Profissional e humano.
+
+TAREFA: Gere diagnóstico patrimonial completo. Integre dados de mercado reais.
+
+RESPONDA EXCLUSIVAMENTE EM JSON VÁLIDO (sem markdown, sem backticks):
 
 {
   "ips": {
     "perfil": "conservador|moderado|arrojado|agressivo",
-    "perfilComportamental": "resumo em 1 linha",
     "horizonte": "X anos",
     "objetivo": "resumo em 1 linha",
-    "patrimonioFinanceiro": "R$ X",
+    "patrimonioFinanceiro": "R$ X.XXX,XX",
     "retornoEsperado": "CDI + X% a Y% a.a.",
     "drawdownMaximo": "-X%",
     "proximaRevisao": "Mês/Ano",
-    "benchmark": "composição do benchmark"
+    "benchmark": "composição"
   },
   "comportamental": {
-    "padraoEmocional": "texto descritivo",
-    "viesesIdentificados": "texto descritivo",
-    "inconsistencias": "texto descritivo",
-    "diretrizComportamental": "frase concreta e prática"
+    "padraoEmocional": "texto ou null",
+    "viesesIdentificados": "texto ou null",
+    "inconsistencias": "texto ou null",
+    "diretriz": "ação concreta ou null"
   },
   "carteiraAtual": [
-    { "ativo": "nome", "classe": "classe", "pct": 25 }
+    { "ativo": "nome", "classe": "renda variável|renda fixa|fundos|outros", "pct": 25 }
   ],
-  "alertasCriticos": [
-    "alerta 1",
-    "alerta 2"
-  ],
+  "alertasCriticos": ["alerta 1", "alerta 2", "alerta 3"],
   "fluxoCaixa": {
-    "capacidadeAporte": "texto",
-    "vazamentos": "texto",
+    "capacidadeAporte": "texto descritivo",
+    "vazamentos": "texto descritivo",
     "margemSeguranca": "X%"
   },
   "carteiraAlvo": [
-    { "nome": "classe", "value": 25 }
+    { "nome": "nome da classe", "value": 25 }
   ],
   "comparativo": [
     { "classe": "nome", "atual": 45, "alvo": 25 }
   ],
   "carteiraFinal": [
-    { "ativo": "nome do produto", "ticker": "TICK11", "classe": "classe", "tipo": "Core|Satélite", "pct": 15, "valor": "R$ X" }
+    { "ativo": "nome do produto", "ticker": "TICK11", "classe": "classe", "pct": 15, "valor": "R$ X.XXX,XX" }
   ],
   "movimentacoes": [
-    { "posicao": "nome", "valor": "R$ X", "acao": "MANTER|RESGATAR|REALOCAR|NOVA POSIÇÃO", "destino": "destino", "justificativa": "texto", "timing": "imediato|30 dias|90 dias" }
+    { "posicao": "nome", "valor": "R$ X", "acao": "MANTER|RESGATAR|REALOCAR|NOVA POSIÇÃO", "destino": "destino", "justificativa": "texto curto", "timing": "imediato|30 dias|90 dias" }
   ],
   "parametros": {
     "retornoNominal": "IPCA + X% a Y% a.a.",
     "retornoReal": "X% a Y% a.a.",
     "drawdownMaximo": "-X% a -Y%",
-    "benchmarkComposto": "composição",
-    "estrategiaAportes": "texto",
-    "rebalanceamento": "texto"
+    "rebalanceamento": "semestral|anual|conforme necessário",
+    "estrategiaAportes": "texto"
   },
-  "estrategiaTributaria": [
-    "ponto 1",
-    "ponto 2"
-  ],
+  "estrategiaTributaria": ["ponto 1", "ponto 2", "ponto 3"],
   "escudoPatrimonial": {
     "indiceCobertura": "X meses",
-    "analiseProtecao": "texto",
-    "recomendacoes": "texto"
+    "analise": "texto descritivo",
+    "recomendacoes": "texto descritivo"
   },
   "riscosEMitigantes": [
-    { "risco": "descrição", "mitigante": "ação" }
+    { "risco": "descrição", "mitigante": "ação concreta" }
   ],
-  "followUp": [
-    "pergunta 1",
-    "pergunta 2",
-    "pergunta 3"
-  ]
+  "followUp": ["pergunta 1", "pergunta 2", "pergunta 3"]
 }
 
-REGRAS:
-- NÃO invente dados. Se informação estiver ausente, indique que precisa ser esclarecida.
-- Seja direto e profissional.
-- Priorize simplicidade implementável.
-- Use aporte efetivo (não declarado) quando houver discrepância.
-- Se não houver extratos, gere carteira do zero.
-- Se não houver relato pessoal, omita a seção comportamental (retorne null).
-- Todos os valores monetários devem usar formato brasileiro (R$ X.XXX,XX).
-- RESPONDA APENAS O JSON, sem markdown, sem backticks, sem texto antes ou depois.`;
+REGRAS CRÍTICAS:
+- NÃO invente dados. Se ausente, indique claramente.
+- Use aporte EFETIVO (não declarado) quando houver discrepância.
+- Valores: sempre em formato brasileiro (R$ X.XXX,XX).
+- Se sem relato pessoal: comportamental = null
+- Se sem extratos: gere carteira do zero com alocação prudente baseada no perfil
+- Integre Selic, CDI, IPCA, IBOV nas recomendações e benchmarks
+- Priorize implementabilidade sobre complexidade teórica
+- Seja direto nas críticas, oportunidades e riscos
+- Estrutura JSON deve ser válida sempre`;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -105,71 +180,107 @@ serve(async (req) => {
   try {
     const { questionnaire, narrative, extractsDescription } = await req.json();
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    // Lê chave Claude do Supabase Secrets
+    const CLAUDE_API_KEY = Deno.env.get("CLAUDE_API_KEY");
+    if (!CLAUDE_API_KEY) {
+      throw new Error("CLAUDE_API_KEY is not configured in Supabase Secrets. Go to Settings > Secrets and add it.");
+    }
 
-    // Build user message with all client data
-    let userMessage = `## DADOS DO QUESTIONÁRIO\n\n`;
-    for (const [key, value] of Object.entries(questionnaire || {})) {
+    console.log("[1/3] Fetching live market data from BCB + brapi...");
+    const marketData = await getMarketData();
+    const marketContext = formatMarketContext(marketData);
+
+    console.log("[2/3] Building user message with questionnaire + narrative...");
+    let userMessage = marketContext + "\n\n";
+    userMessage += "## DADOS DO CLIENTE\n\n";
+
+    // Filtra dados importantes (reduz tokens)
+    const importantKeys = [
+      "nomeCompleto",
+      "idade",
+      "rendaBruta",
+      "patrimonioFinanceiro",
+      "patrimonioImobiliario",
+      "dividas",
+      "objetivo",
+      "horizonte",
+      "perfilAnbima",
+      "reacaoQuedas",
+      "perdaMaxima",
+      "experiencia",
+      "estadoCivil",
+      "dependentes",
+    ];
+
+    for (const key of importantKeys) {
+      const value = questionnaire?.[key];
       if (value) userMessage += `- ${key}: ${value}\n`;
     }
 
+    // Carteira
     if (extractsDescription) {
-      userMessage += `\n## EXTRATOS DA CARTEIRA\n\n${extractsDescription}\n`;
+      userMessage += `\n## CARTEIRA ATUAL\n${extractsDescription}\n`;
     } else {
-      userMessage += `\n## EXTRATOS DA CARTEIRA\nNenhum extrato enviado. O cliente não possui investimentos atuais ou não enviou extratos. Gere carteira do zero.\n`;
+      userMessage += "\n## CARTEIRA ATUAL\nSem extratos enviados. Gere carteira do zero com alocação prudente.\n";
     }
 
+    // Relato pessoal (comportamental)
     if (narrative) {
-      userMessage += `\n## RELATO PESSOAL (DIMENSÃO COMPORTAMENTAL)\n\n${narrative}\n`;
+      userMessage += `\n## RELATO PESSOAL (COMPORTAMENTAL)\n${narrative}\n`;
     } else {
-      userMessage += `\n## RELATO PESSOAL\nNão fornecido. Omita a análise comportamental.\n`;
+      userMessage += "\n## RELATO PESSOAL\nNão fornecido. Retorne comportamental: null.\n";
     }
 
-    console.log("Calling AI gateway with user message length:", userMessage.length);
+    console.log(
+      `[3/3] Calling Claude API (message size: ${userMessage.length} chars, ~${Math.round(userMessage.length / 4)} tokens)...`,
+    );
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // Chama Claude direto (não Gemini, não gateway)
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
+        "x-api-key": CLAUDE_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMessage },
-        ],
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 4096,
+        system: getSystemPrompt(),
+        messages: [{ role: "user", content: userMessage }],
       }),
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
+      const errorData = await response.json();
+      console.error(`Claude API error: ${response.status}`, JSON.stringify(errorData).substring(0, 500));
 
+      if (response.status === 401) {
+        return new Response(
+          JSON.stringify({
+            error: "Claude API key invalid or expired. Check Supabase Secrets.",
+          }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded. Try again in 1 minute." }), {
           status: 429,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add credits to continue." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      throw new Error(`AI gateway returned ${response.status}`);
+
+      throw new Error(`Claude API returned ${response.status}: ${errorData.error?.message || ""}`);
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const content = data.content?.[0]?.text;
 
     if (!content) {
-      throw new Error("No content in AI response");
+      throw new Error("No content in Claude response");
     }
 
-    // Parse the JSON response — strip markdown fences if present
+    // Parse JSON (remove markdown fences se houver)
     let cleanContent = content.trim();
     if (cleanContent.startsWith("```")) {
       cleanContent = cleanContent.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
@@ -179,10 +290,11 @@ serve(async (req) => {
     try {
       diagnosis = JSON.parse(cleanContent);
     } catch (parseError) {
-      console.error("Failed to parse AI response as JSON:", cleanContent.substring(0, 500));
-      throw new Error("AI response was not valid JSON");
+      console.error("Failed to parse Claude response as JSON:", cleanContent.substring(0, 1000));
+      throw new Error(`Claude response was not valid JSON. First 500 chars: ${cleanContent.substring(0, 500)}`);
     }
 
+    console.log("✅ Diagnosis generated successfully");
     return new Response(JSON.stringify({ diagnosis }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
